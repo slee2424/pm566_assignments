@@ -1,0 +1,172 @@
+---
+title: "Assignment2"
+output: github_document
+always_allow_html: true
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(dtplyr)
+library(Hmisc)
+library(leaflet)
+library(ggfortify)
+```
+
+
+```{r}
+urlfile=("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/01_chs/chs_individual.csv")
+chs_individual<-read_csv(url(urlfile))
+
+urlfile=("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/01_chs/chs_regional.csv")
+chs_regional<-read_csv(url(urlfile))
+
+head(chs_individual)
+head(chs_regional)
+```
+
+#Data Wrangling
+
+1.
+```{r}
+chs_merged <- 
+  chs_individual %>%
+  left_join(chs_regional, by="townname")
+
+dim(chs_individual)
+dim(chs_regional)
+dim(chs_merged)
+
+head(chs_merged)
+
+```
+
+2.
+```{r}
+chs_merged <-
+  chs_merged %>%
+  mutate(
+    obesity_level = cut(
+      bmi,
+      breaks = c(0, 14, 22, 24, 100),
+      right = F,
+      labels = c("Underweight", "Normal", "Overweight", "Obese"),
+      ))
+
+chs_merged %>%
+  select(obesity_level, bmi)
+
+
+chs_merged %>% 
+  group_by(obesity_level) %>% summarise(max(bmi), min(bmi))
+```
+
+3.
+```{r}
+chs_merged <-
+  chs_merged %>%
+  mutate(
+    smoke_gas_exposure = case_when(smoke==0 & gasstove==0 ~ "None of both",
+                                   smoke==1 & gasstove==0 ~ "Smoke only", 
+                                   smoke==0 & gasstove==1 ~ "Gas stove only",
+                                   smoke==1 & gasstove==1 ~ "Both"
+                                         ))
+                                
+table(chs_merged$smoke_gas_exposure)
+```
+
+4.
+```{r}
+chs_merged %>% 
+  group_by(townname) %>% summarise(mean(fev, na.rm=TRUE), sd(fev, na.rm = TRUE), mean(asthma, na.rm = TRUE), sd(asthma, na.rm = TRUE))
+
+chs_merged %>% 
+  group_by(male) %>% summarise(mean(fev, na.rm=TRUE), sd(fev, na.rm = TRUE), mean(asthma, na.rm = TRUE), sd(asthma, na.rm = TRUE))
+
+chs_merged %>% 
+  group_by(obesity_level) %>% summarise(mean(fev, na.rm=TRUE), sd(fev, na.rm = TRUE), mean(asthma, na.rm = TRUE), sd(asthma, na.rm = TRUE))
+
+chs_merged %>% 
+  group_by(smoke_gas_exposure) %>% summarise(mean(fev, na.rm=TRUE), sd(fev, na.rm = TRUE), mean(asthma, na.rm = TRUE), sd(asthma, na.rm = TRUE))
+
+```
+
+
+#Looking at the data (EDA)
+1.
+- For each town, the regression line shows that BMI and FEV has positive relationship.
+```{r}
+chs_merged %>%
+  filter(!(townname %in% NA)) %>%
+ggplot(mapping = aes(y=bmi, x=fev, fill=townname))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  facet_wrap(~townname, nrow = 3)
+```
+
+2.
+- For both histograms, significant relationship between variables were not detected.
+```{r}
+chs_merged %>%
+  filter(!(obesity_level %in% NA)) %>%
+ggplot(mapping = aes(x=fev, fill=obesity_level))+
+  geom_histogram()
+  
+
+chs_merged %>%
+  ggplot(mapping = aes(x=fev, fill=smoke_gas_exposure))+
+  geom_histogram()+
+  scale_fill_viridis_d()
+
+```
+
+3.
+- Does not show any relationship.
+```{r}
+chs_merged %>%
+  ggplot(mapping = aes(x=obesity_level, fill=smoke_gas_exposure))+
+  geom_bar()
+  
+```
+
+4.
+- The stat summary chart shows that there is a positive relationship between fev and bmi but not between fev and smoke_gas_exposure. 
+
+```{r}
+
+chs_merged %>%
+  ggplot()+
+  stat_summary(mapping = aes(x=obesity_level, y=fev))
+  
+
+chs_merged %>%
+  ggplot()+
+  stat_summary(mapping = aes(x=smoke_gas_exposure, y=fev))
+
+
+
+```
+
+5.
+- The leaflet map shows that the red dots, which indicates higher pm2.5 mass, are concentrated in the metroplitan area.
+```{r}
+pm25_pal = colorNumeric(c('blue','red'), domain = chs_merged$pm25_mass)
+
+leaflet(chs_merged) %>%
+  addProviderTiles("OpenStreetMap") %>%
+  addCircles(lng = ~lon, lat = ~lat, color=~pm25_pal(pm25_mass), opacity=1,fillOpacity=1, radius=500)
+```
+
+6.
+- regression line shows that there is no relationship between FEV and PM2.5_mass
+
+```{r}
+chs_merged %>%
+  ggplot(aes(x = pm25_mass, y = fev)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
