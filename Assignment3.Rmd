@@ -1,0 +1,207 @@
+---
+title: "Assignment 3"
+output: github_document
+always_allow_html: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(httr)
+library(xml2)
+library(stringr)
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+library(tidyverse)
+```
+
+## APIs
+
+- Using the NCBI API, look for papers that show up under the term "sars-cov-2 trial vaccine." Look for the data in the pubmed database, and then retrieve the details of the paper as shown in lab 7. How many papers were you able to find?
+-- 564 papers were found.
+
+```{r, cache=TRUE}
+# Downloading the website
+website <- xml2::read_html("https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2+trial+vaccine")
+
+# Finding the counts
+counts <- xml2::xml_find_first(website, "/html/body/main/div[9]/div[2]/div[2]/div[1]/span")
+
+# Turning it into text
+counts <- as.character(counts)
+
+# Extracting the data using regex
+stringr::str_extract(counts, "[0-9,]+")
+```
+
+
+- Using the list of pubmed ids you retrieved, download each papers’ details using the query parameter rettype = abstract. If you get more than 250 ids, just keep the first 250.
+
+```{r}
+query_ids <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+  query = list(
+    db = "pubmed",
+    term = "sars-cov-2 trial vaccine",
+    retmax = 250
+  )
+)
+
+# Extracting the content of the response of GET
+ids <- httr::content(query_ids)
+```
+
+- As we did in lab 7. Create a dataset containing the following:
+
+Pubmed ID number,
+Title of the paper,
+Name of the journal where it was published,
+Publication date, and
+Abstract of the paper (if any).
+
+- Getting Pubmed ID number
+```{r}
+# Turn the result into a character vector
+ids <- as.character(ids)
+
+# Find all the ids 
+ids <- stringr::str_extract_all(ids, "<Id>[0-9]+</Id>")[[1]]
+
+# Remove all the leading and trailing <Id> </Id>. Make use of "|"
+ids <- stringr::str_remove_all(ids, "<Id>|</Id>")
+```
+
+- Getting publication abstracts
+```{r}
+publications <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+  query = list(
+    db = "pubmed",
+    id = paste(ids, collapse=","),
+    retmax = 1000,
+    rettype = "abstract"
+    )
+)
+
+# Turning the output into character vector
+publications <- httr::content(publications)
+publications_txt <- as.character(publications)
+```
+
+```{r}
+pub_char_list <- xml2::xml_children(publications)
+pub_char_list <- sapply(pub_char_list, as.character)
+```
+
+- Title of the paper
+```{r}
+titles <- str_extract(pub_char_list, "<ArticleTitle>(\\n|.)+</ArticleTitle>")
+titles <- str_remove_all(titles, "</?[[:alnum:]]+>")
+titles <- str_replace_all(titles, "\\s+", " ")
+```
+
+- Name of the journal where it was published
+```{r}
+journals <- str_extract(pub_char_list, "<Title>(\\n|.)+</Title>")
+journals <- str_remove_all(journals, "</?[[:alnum:]]+>")
+journals <- str_replace_all(journals, "\\s+", " ")
+```
+
+- Publication date
+```{r}
+dates <- str_extract(pub_char_list, "<PubDate>(\\n|.)+</PubDate>")
+dates <- str_remove_all(dates, "</?[[:alnum:]]+>")
+dates <- str_replace_all(dates, "\\s+", " ")
+```
+
+- Abstracts of the paper
+```{r}
+abstracts <- str_extract(pub_char_list, "<Abstract>(\\n|.)+</Abstract>")
+abstracts <- str_remove_all(abstracts, "</?[[:alnum:]]+>")
+abstracts <- str_replace_all(abstracts, "\\s+", " ")
+```
+
+- Creating the dataset
+```{r}
+database <- data.frame(
+  PubMedID =ids,
+  Title = titles,
+  Journal = journals,
+  Date = dates, 
+  Abstracts = abstracts
+)
+knitr::kable(database)
+```
+
+
+## Text Mining
+
+- A new dataset has been added to the data science data repository https://github.com/USCbiostats/data-science-data/tree/master/03_pubmed. The dataset contains 3241 abstracts from articles across 5 search terms. Your job is to analyse these abstracts to find interesting insights.
+
+```{r}
+articles <- read_csv("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/03_pubmed/pubmed.csv")
+```
+
+- Tokenize the abstracts and count the number of each token. Do you see anything interesting? 
+-- covid, 19, patients, cancer, and prostate are interesting words in top 20.
+
+```{r}
+articles %>%
+  unnest_tokens(token, abstract) %>%
+  count(token, sort = TRUE)
+```
+
+- Does removing stop words change what tokens appear as the most frequent? What are the 5 most common tokens for each search term after removing stopwords?
+-- All the stop words that are not interesting has removed.
+```{r}
+articles %>%
+  unnest_tokens(word, abstract) %>%
+  anti_join(stop_words, by = c("word")) %>%
+  count(word, sort = TRUE) %>%
+  top_n(5, n)
+
+articles %>%
+  unnest_tokens(token, abstract) %>%
+  anti_join(tidytext::stop_words, by = c("token" = "word")) %>%
+  group_by(term) %>%
+  count(token) %>%
+  top_n(5, n)
+```
+
+- Tokenize the abstracts into bigrams. Find the 10 most common bigram and visualize them with ggplot2.
+
+```{r}
+articles %>%
+  unnest_ngrams(ngram, abstract, n = 2) %>%
+  count(ngram, sort = TRUE) %>%
+  top_n(10, n) %>%
+  ggplot(aes(n, fct_reorder(ngram, n))) +
+  geom_col()
+```
+
+- Calculate the TF-IDF value for each word-search term combination. (here you want the search term to be the “document”) What are the 5 tokens from each search term with the highest TF-IDF value? How are the results different from the answers you got in question 1?
+
+- For "covid", top 5 changed from "19", "covid", "disease", "pandemic", "patients" to "covid", "pandemic", "coronavirus", "sars", "cov".
+
+- For "cystic fibrosis", top 5 changed from "cf", "cystic", "disease", "fibrosis", "patients" to "cf", "fibrosis", "cystic", "cftr", "sweat".
+
+- For "meningitis", top 5 changed from	"clinical", "csf", "meningeal", "meningitis", "patients" to "meningitis", "meningeal", "pachymeningitis", "csf", "meninges".
+
+- For "preeclampsia", top 5 changed from "eclampsia", "pre", "preeclampsia", "pregnancy", "women" to "eclampsia", "preeclampsi", "pregnancy", "maternal", "gestational".
+
+- For "prostate cancer", top5 changed from "cancer", "disease", "patients", "prostate", "treatment" to "prostate", "androgen", "psa", "prostatectomy", "castration".	
+
+```{r}
+articles %>%
+  unnest_tokens(token, abstract) %>%
+  anti_join(tidytext::stop_words, by = c("token" = "word")) %>%
+  count(token, term) %>%
+  bind_tf_idf(token, term, n) %>%
+  arrange(desc(tf_idf)) 
+```
+
