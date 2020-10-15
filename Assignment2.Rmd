@@ -161,7 +161,7 @@ leaflet(chs_merged) %>%
 ```
 
 6.
-- regression line shows that there is no relationship between FEV and PM2.5_mass
+- regression line shows that there is no relationship between FEV and PM2.5_mass.
 
 ```{r}
 chs_merged %>%
